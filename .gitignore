@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+streamlitenv/
+.ipynb_checkpoints/
+/.streamlit/
+new_expenses.db
