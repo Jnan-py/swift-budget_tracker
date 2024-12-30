@@ -14,52 +14,104 @@ from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import LabelEncoder as le
 
-def create_user():
-    conn = sqlite3.connect("expenses.db")
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "username" not in st.session_state:
+    st.session_state.username = ""
+
+def create_tables():
+    conn = sqlite3.connect("new_expenses.db")
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL,
-                    password TEXT NOT NULL
-                )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS expenses (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    category TEXT NOT NULL,
-                    amount REAL NOT NULL,
-                    date TEXT NOT NULL
-                )''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            amount REAL NOT NULL,
+            date TEXT NOT NULL,
+            FOREIGN KEY(username) REFERENCES users(username)
+        )
+    ''')
     conn.commit()
     conn.close()
 
-def register(username,password):
-    conn=sqlite3.connect("expenses.db")
-    c=conn.cursor()
-    c.execute("INSERT INTO users(username,password) VALUES(?,?)",(username,password))
-    user_id = c.lastrowid
-    conn.commit()
+def register_user(username, password):
+    conn = sqlite3.connect("new_expenses.db")
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        st.warning("Username already exists. Please choose a different username.")
     conn.close()
-    return user_id
 
-def login(username,password):
-    conn=sqlite3.connect("expenses.db")
-    c=conn.cursor()
-    c.execute("SELECT * FROM users WHERE username=? AND password = ?",(username,password))
-    user=c.fetchone()
-    conn.commit()
+def authenticate_user(username, password):
+    conn = sqlite3.connect("new_expenses.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+    user = c.fetchone()
     conn.close()
     return user
 
-def check_users():
-    conn=sqlite3.connect("expenses.db")
-    c=conn.cursor()
-    c.execute("SELECT COUNT(*)  FROM users")
-    count = c.fetchone()[0]
+def add_expense(username, name, category, amount):
+    conn = sqlite3.connect("new_expenses.db")
+    c = conn.cursor()
+    date = datetime.datetime.now().strftime("%Y-%m-%d")
+    c.execute(
+        "INSERT INTO expenses (username, name, category, amount, date) VALUES (?, ?, ?, ?, ?)",
+        (username, name, category, amount, date)
+    )
+    conn.commit()
     conn.close()
-    return count > 0
+
+def get_expenses(username):
+    conn = sqlite3.connect("new_expenses.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM expenses WHERE username=?", (username,))
+    expenses = c.fetchall()
+    conn.close()
+    return expenses
+
+def predict_expenses(category):
+    expenses = get_expenses(st.session_state.username)
+    transactions_df = pd.DataFrame(expenses, columns=["ID", "Username", "Name", "category", "amount", "date"])
+    transactions_df = transactions_df.drop(columns=["Username"])
+    category_data = transactions_df[transactions_df['category']==category]
+    category_data['date'] = pd.to_datetime(category_data['date'])
+    
+    new_df = category_data.groupby('date')['amount'].sum().reset_index()
+    new_df.columns = ['date', 'total_amount']
+    
+    X = new_df['date'].apply(lambda x: x.toordinal()).values.reshape(-1, 1)
+    y = new_df['total_amount'].values
+
+    svr = SVR(kernel='rbf',C=100,gamma=0.1,epsilon=.1)
+    svr.fit(X,y)
+    
+    existing_dates = category_data['date']
+    existing_dates_ordinal = np.array([date.toordinal() for date in existing_dates]).reshape(-1, 1)
+    preds_e = svr.predict(existing_dates_ordinal)
+    
+    future_dates = pd.date_range(start=category_data['date'].max(),periods=5,freq='M')
+    future_dates_ordinal = np.array([date.toordinal() for date in future_dates]).reshape(-1, 1)
+    preds_f = svr.predict(future_dates_ordinal)
+
+    return existing_dates,preds_e,future_dates, preds_f
+
+@st.cache_data
+def convert_df_to_csv(df):
+    return df.to_csv().encode('utf-8')
     
 def main():
-    create_user()
+    create_tables()
     st.sidebar.title("SWIFT")
     st.sidebar.header("NAVIGATION")
 
@@ -79,66 +131,82 @@ def main():
         st.write("Take the first step towards financial freedom today with SWIFT and start tracking your way to a brighter future!")
         st.subheader("Ready to take control of your finances? Get started now!")
         st.write("Navigate to the sidebar")
+
     if page == "Home":
         st.header("Welcome to SWIFT - Budget Tracking and Analysis App")
-        st.subheader("Log In or Sign Up")
-        select_mode = option_menu(menu_title=None,options=["Log In", "Sign up"])
-
-        if select_mode == "Log In":
-            user_login = st.text_input("Username")
-            pass_login = st.text_input("Password",type="password")
-            if st.button("Log In"):
-                if user_login and pass_login:
-                    user = login(user_login,pass_login)
+        if st.session_state.logged_in:
+            st.success(f"You are logged in as {st.session_state.username}. Please log out to switch accounts.")
+            if st.button("Log Out"):
+                st.session_state.logged_in = False
+                st.session_state.username = ""
+                st.experimental_rerun()
+        else:
+            select_mode = option_menu(menu_title=None, options=["Log In", "Sign Up"],orientation="horizontal")
+            if select_mode == "Log In":
+                user_login = st.text_input("Username")
+                pass_login = st.text_input("Password", type="password")
+                if st.button("Log In"):
+                    user = authenticate_user(user_login, pass_login)
                     if user:
+                        st.session_state.logged_in = True
+                        st.session_state.username = user_login
                         st.success(f"Logged in as {user_login}")
-                        st.info("Redirecting.....")
-                        st.rerun()
+                        st.experimental_rerun()
                     else:
                         st.error("Invalid username or password")
-                else:
-                    st.warning("Please enter both username and password")
-        else:
-            user_sign = st.text_input("Username")
-            password_sign = st.text_input("Password",type="password")
-            if st.button("Sign Up"):
-                if user_sign and password_sign:
-                    register(user_sign,password_sign)
-                    st.success("Account created successfully")
-                else:
-                    st.warning("Please enter both username and password")
+            else:
+                user_sign = st.text_input("Username")
+                password_sign = st.text_input("Password", type="password")
+                if st.button("Sign Up"):
+                    if user_sign and password_sign:
+                        register_user(user_sign, password_sign)
+                        st.success("Account created successfully")
+                    else:
+                        st.warning("Please enter both username and password")
+
     if page == "Budget Tracking":
-        if check_users():
-            selected = option_menu(menu_title=None, options=["Add expense", "View expenses", "Visualise expenses"])
+        if not st.session_state.logged_in:
+            st.error("Please log in to access this page.")
+
+        else:
+            st.success(f"Hello, {st.session_state.username}")
+            selected = option_menu(menu_title=None, options=["Add expense", "View expenses", "Visualise expenses"],orientation="horizontal")
 
             if selected == "Add expense":
                 st.title("Add your expenses")
                 category = st.radio("Categories", ["Housing", "Transportation", "Foodandgroceries", "Healthcare", "PersonalandLifestyle", "DebtandSavings"])
-                #budget = st.number_input("Enter your budget",min_value=0.01,step=0.01)
                 expense_name = st.text_input("Expense Name", "")
                 amount = st.number_input("Amount", min_value=0.01, step=0.01)
                 description = st.text_area("Description", "")
 
                 if st.button("Add"):
-                    add_expense(expense_name, category, amount)
+                    add_expense(st.session_state.username,expense_name, category, amount)
                     st.success("Transaction added successfully!")
 
             elif selected == "View expenses":
-                st.title("View your expenses")
-                df = load_transactions()
-                st.write("Expense Data : ")
-                st.write(df)
-                if df.empty:
-                    st.write("No transactions recorded yet")
-                else:
-                    st.download_button(label="Download as CSV",data=convert_df_to_csv(df),file_name='expense_data.csv',mime='text/csv')
-            elif selected == "Visualise expenses":
-                transactions = load_transactions()
-                if transactions.empty:
+                st.title("View Your Expenses")
+                expenses = get_expenses(st.session_state.username)
+                if not expenses:
                     st.error("No transactions recorded yet.")
                 else:
-                    #transactions_df = pd.DataFrame(transactions, columns=["ID", "Name", "Category", "Amount", "Date"])
-                    transactions_df = load_transactions()
+                    df = pd.DataFrame(expenses, columns=["ID", "Username", "Name", "Category", "Amount", "Date"])
+                    df = df.drop(columns=["Username"])  
+                    st.write("Expense Data:")
+                    st.write(df)
+                    st.download_button(
+                        label="Download as CSV",
+                        data=convert_df_to_csv(df),
+                        file_name="expense_data.csv",
+                        mime="text/csv"
+                    )
+
+            elif selected == "Visualise expenses":
+                expenses = get_expenses(st.session_state.username)
+                if len(expenses) == 0:
+                    st.error("No transactions recorded yet.")
+                else:
+                    transactions_df = pd.DataFrame(expenses, columns=["ID", "Username", "Name", "category", "amount", "date"])
+                    transactions_df = transactions_df.drop(columns=["Username"]) 
                     category_totals = transactions_df.groupby("category")["amount"].sum()
 
                     st.subheader("Expense Distribution by Category")
@@ -156,16 +224,17 @@ def main():
                     fig_bar.update_yaxes(title_text='Total Expense')
                     st.plotly_chart(fig_bar, use_container_width=True)
 
-        else:
-            st.error("Please log in to access this page")
-
     elif page == "Predictions":
-        if check_users():
-            transactions_df = load_transactions()
+        if not st.session_state.logged_in:
+            st.error("Please log in to access this page.")
+        else:
+            st.success(f"Hello, {st.session_state.username}")
+            expenses = get_expenses(st.session_state.username)
+            transactions_df = pd.DataFrame(expenses, columns=["ID", "Username", "Name", "category", "amount", "date"])
+            transactions_df = transactions_df.drop(columns=["Username"]) 
             st.header("Future Predictions")
             st.write("Enter the category and amount for future prediction:")
             category_input = st.selectbox("category", ["Housing", "Transportation", "Foodandgroceries", "Healthcare", "PersonalandLifestyle", "DebtandSavings"])
-            #amount_input = st.number_input("amount", min_value=0.01, step=0.01)
 
             if st.button("Predict"):
                 existing_dates, preds_e, future_dates, preds_f = predict_expenses(category_input)
@@ -190,103 +259,57 @@ def main():
                 st.write("Future Predicted Expenses :")
                 st.write(future_df)
                 st.plotly_chart(fig)
-                
-                
-
-        else:
-            st.error("Please log in to access this page")
             
     elif page == "Clusters":
-        if check_users():
-            st.header("Visualizations")
-            expenses_df = load_transactions()
-            opt = st.selectbox("Cluster by", ["Categories", "Dates", "Amount"])
-            expenses_df['l'] = le().fit_transform(expenses_df['category'])
-            expenses_df['dl'] = le().fit_transform(expenses_df['date'])
+        try:
+            if not st.session_state.logged_in:
+                st.error("Please log in to access this page.")
+            else:
+                st.success(f"Hello, {st.session_state.username}")
+                st.header("Visualizations")
+                expenses= get_expenses(st.session_state.username)
+                expenses_df = pd.DataFrame(expenses, columns=["id", "username", "name", "category", "amount", "date"])
+                expenses_df = expenses_df.drop(columns=["username"]) 
+                opt = st.selectbox("Cluster by", ["Categories", "Dates", "Amount"])
 
-            if opt == "Categories":
-                features = ['l']
-            
-            elif opt == "Dates":
-                features = ['dl']
+                expenses_df['l'] = le().fit_transform(expenses_df['category'])
+                expenses_df['dl'] = le().fit_transform(expenses_df['date'])
+
+                if opt == "Categories":
+                    features = ['l']
                 
-            elif opt == "Amount":
-                features = ['amount']
+                elif opt == "Dates":
+                    features = ['dl']
+                    
+                elif opt == "Amount":
+                    features = ['amount']
 
-            X = expenses_df[features]
+                X = expenses_df[features]
 
-            kmeans = KMeans(n_clusters=6)  
-            clusters = kmeans.fit_predict(X)
-            expenses_df['cluster'] = clusters
+                kmeans = KMeans(n_clusters=len(X))
+                clusters = kmeans.fit_predict(X)
+                expenses_df['cluster'] = clusters
 
-            custom_color_scale = px.colors.qualitative.Plotly
-            if opt == "Categories":
-                fig = px.scatter(x=expenses_df['id'], y=expenses_df['category'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Categories")
-                fig.update_yaxes(title=opt)
+                custom_color_scale = px.colors.qualitative.Plotly
+                if opt == "Categories":
+                    fig = px.scatter(x=expenses_df['id'], y=expenses_df['category'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Categories")
+                    fig.update_yaxes(title=opt)
 
-            elif opt == "Dates":
-                fig = px.scatter(x=expenses_df['id'], y=expenses_df['date'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Dates")
-                fig.update_yaxes(title=opt)
-            elif opt == "Amount":
-                fig = px.scatter(x=expenses_df['id'], y=expenses_df['amount'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Amount")
-                fig.update_yaxes(title=opt)
-            
-            fig.update_xaxes(title="Entry ID")
-            fig.update_layout(showlegend=False)
+                elif opt == "Dates":
+                    fig = px.scatter(x=expenses_df['id'], y=expenses_df['date'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Dates")
+                    fig.update_yaxes(title=opt)
+                elif opt == "Amount":
+                    fig = px.scatter(x=expenses_df['id'], y=expenses_df['amount'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Amount")
+                    fig.update_yaxes(title=opt)
+                
+                fig.update_xaxes(title="Entry ID")
+                fig.update_layout(showlegend=False)
 
-            st.write(expenses_df[['id','name','category','amount','date','cluster']])
-            st.plotly_chart(fig)
-            
-
-            
-        else:
-            st.error("Please log in to access this page")
-
-def add_expense(expense_name,category,amount):
-    #add expense code
-    conn=sqlite3.connect("expenses.db")
-    c=conn.cursor()
-    date = datetime.datetime.now().strftime("%Y-%m-%d")
-    c.execute("INSERT INTO expenses(name,category,amount,date) VALUES(?,?,?,?)",(expense_name,category,amount,date))
-    conn.commit()
-    conn.close()
-
-def load_transactions():
-    #load expenses 
-    conn=sqlite3.connect("expenses.db")
-    df = pd.read_sql_query("SELECT * FROM expenses",conn)
-    conn.close()
-    return df
-
-def predict_expenses(category):
-    transactions_df = load_transactions()
-    category_data = transactions_df[transactions_df['category']==category]
-    category_data['date'] = pd.to_datetime(category_data['date'])
-    
-    new_df = category_data.groupby('date')['amount'].sum().reset_index()
-    new_df.columns = ['date', 'total_amount']
-    
-    X = new_df['date'].apply(lambda x: x.toordinal()).values.reshape(-1, 1)
-    y = new_df['total_amount'].values
-
-    #lr = LinearRegression()
-    #lr.fit(X,y)
-    svr = SVR(kernel='rbf',C=100,gamma=0.1,epsilon=.1)
-    svr.fit(X,y)
-    
-    existing_dates = category_data['date']
-    existing_dates_ordinal = np.array([date.toordinal() for date in existing_dates]).reshape(-1, 1)
-    preds_e = svr.predict(existing_dates_ordinal)
-    
-    future_dates = pd.date_range(start=category_data['date'].max(),periods=5,freq='M')
-    future_dates_ordinal = np.array([date.toordinal() for date in future_dates]).reshape(-1, 1)
-    preds_f = svr.predict(future_dates_ordinal)
-
-    return existing_dates,preds_e,future_dates, preds_f
-
-@st.cache_data
-def convert_df_to_csv(df):
-    return df.to_csv().encode('utf-8')
+                st.write(expenses_df[['id','name','category','amount','date','cluster']])
+                st.plotly_chart(fig)
+        
+        except Exception as e:
+            st.error("There is no data available to cluster")
 
 if __name__ == "__main__":
     main()
