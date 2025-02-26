@@ -82,7 +82,7 @@ Secure database storage using SQLite
 
 3. Run the app:
    ```bash
-   streamlit run app.py
+   streamlit run budgetracker.py
    ```
 
 ## Usage
@@ -132,7 +132,7 @@ Create a new account for a unique username and password.
 ## Project Organization
 
 ```bash
-├── budgettracking.py
+├── budgetracker.py
 ├── new_expenses.db
 ├── requirements.txt
 └── README.md
