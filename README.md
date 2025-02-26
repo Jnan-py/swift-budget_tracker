@@ -71,19 +71,19 @@ Secure database storage using SQLite
 
 1. Clone repository:
    ```bash
-   git clone <repository-url>
-   cd <repository-folder>
+   git clone https://github.com/Jnan-py/swift-budget_tracker.git
+   cd swift-budget_tracker
    ```
+   
 2. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-````
 3. Run the app:
    ```bash
    streamlit run app.py
-````
+   ```
 
 ## Usage
 
@@ -132,7 +132,7 @@ Create a new account for a unique username and password.
 ## Project Organization
 
 ```bash
-├── app.py
+├── budgettracking.py
 ├── new_expenses.db
 ├── requirements.txt
 └── README.md
