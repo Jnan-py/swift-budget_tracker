@@ -14,6 +14,8 @@ from sklearn.metrics import mean_squared_error
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import LabelEncoder as le
 
+st.set_page_config(page_title="SWIFT", page_icon=":moneybag:", layout="wide")
+
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
@@ -139,7 +141,7 @@ def main():
             if st.button("Log Out"):
                 st.session_state.logged_in = False
                 st.session_state.username = ""
-                st.experimental_rerun()
+                st.rerun()
         else:
             select_mode = option_menu(menu_title=None, options=["Log In", "Sign Up"],orientation="horizontal")
             if select_mode == "Log In":
@@ -151,7 +153,7 @@ def main():
                         st.session_state.logged_in = True
                         st.session_state.username = user_login
                         st.success(f"Logged in as {user_login}")
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Invalid username or password")
             else:
@@ -236,80 +238,80 @@ def main():
             st.write("Enter the category and amount for future prediction:")
             category_input = st.selectbox("category", ["Housing", "Transportation", "Foodandgroceries", "Healthcare", "PersonalandLifestyle", "DebtandSavings"])
 
-            if st.button("Predict"):
-                existing_dates, preds_e, future_dates, preds_f = predict_expenses(category_input)
-                fig = go.Figure()
-                existing_daily_totals = transactions_df[transactions_df['category'] == category_input].groupby(pd.to_datetime(transactions_df["date"]).dt.date)["amount"].sum()
-                fig.add_trace(go.Scatter(x=existing_dates,
-                                         y=existing_daily_totals,
-                                         mode='markers',
-                                         name='Existing Expenses'))
-                fig.add_trace(go.Scatter(x=np.concatenate((existing_dates, future_dates)),
-                                     y=np.concatenate((preds_e, preds_f)),
-                                     mode='lines', name='Predicted Expenses'))
+            try:
+                if st.button("Predict"):
+                    existing_dates, preds_e, future_dates, preds_f = predict_expenses(category_input)
+                    fig = go.Figure()
+                    existing_daily_totals = transactions_df[transactions_df['category'] == category_input].groupby(pd.to_datetime(transactions_df["date"]).dt.date)["amount"].sum()
+                    fig.add_trace(go.Scatter(x=existing_dates,
+                                            y=existing_daily_totals,
+                                            mode='markers',
+                                            name='Existing Expenses'))
+                    fig.add_trace(go.Scatter(x=np.concatenate((existing_dates, future_dates)),
+                                        y=np.concatenate((preds_e, preds_f)),
+                                        mode='lines', name='Predicted Expenses'))
 
-                fig.update_layout(title='Expense Prediction',
-                      xaxis_title='Date',
-                      yaxis_title='Expense Amount',
-                      showlegend=True)
-                future_dates1 = [dt.date() for dt in future_dates]
-                future_data = {'Date': future_dates1, 'Predicted Expense': preds_f}
-                future_df = pd.DataFrame(future_data)
-                
-                st.write("Future Predicted Expenses :")
-                st.write(future_df)
-                st.plotly_chart(fig)
+                    fig.update_layout(title='Expense Prediction',
+                        xaxis_title='Date',
+                        yaxis_title='Expense Amount',
+                        showlegend=True)
+                    future_dates1 = [dt.date() for dt in future_dates]
+                    future_data = {'Date': future_dates1, 'Predicted Expense': preds_f}
+                    future_df = pd.DataFrame(future_data)
+                    
+                    st.write("Future Predicted Expenses :")
+                    st.write(future_df)
+                    st.plotly_chart(fig)
+
+            except Exception as e:
+                st.warning("There are no entries in the Category")
             
     elif page == "Clusters":
-        try:
-            if not st.session_state.logged_in:
-                st.error("Please log in to access this page.")
-            else:
-                st.success(f"Hello, {st.session_state.username}")
-                st.header("Visualizations")
-                expenses= get_expenses(st.session_state.username)
-                expenses_df = pd.DataFrame(expenses, columns=["id", "username", "name", "category", "amount", "date"])
-                expenses_df = expenses_df.drop(columns=["username"]) 
-                opt = st.selectbox("Cluster by", ["Categories", "Dates", "Amount"])
+        if not st.session_state.logged_in:
+            st.error("Please log in to access this page.")
+        else:
+            st.success(f"Hello, {st.session_state.username}")
+            st.header("Visualizations")
+            expenses= get_expenses(st.session_state.username)
+            expenses_df = pd.DataFrame(expenses, columns=["id", "username", "name", "category", "amount", "date"])
+            expenses_df = expenses_df.drop(columns=["username"]) 
+            opt = st.selectbox("Cluster by", ["Categories", "Dates", "Amount"])
 
-                expenses_df['l'] = le().fit_transform(expenses_df['category'])
-                expenses_df['dl'] = le().fit_transform(expenses_df['date'])
+            expenses_df['l'] = le().fit_transform(expenses_df['category'])
+            expenses_df['dl'] = le().fit_transform(expenses_df['date'])
 
-                if opt == "Categories":
-                    features = ['l']
+            if opt == "Categories":
+                features = ['l']
+            
+            elif opt == "Dates":
+                features = ['dl']
                 
-                elif opt == "Dates":
-                    features = ['dl']
-                    
-                elif opt == "Amount":
-                    features = ['amount']
+            elif opt == "Amount":
+                features = ['amount']
 
-                X = expenses_df[features]
+            X = expenses_df[features]
 
-                kmeans = KMeans(n_clusters=len(X))
-                clusters = kmeans.fit_predict(X)
-                expenses_df['cluster'] = clusters
+            kmeans = KMeans(n_clusters=len(X))
+            clusters = kmeans.fit_predict(X)
+            expenses_df['cluster'] = clusters
 
-                custom_color_scale = px.colors.qualitative.Plotly
-                if opt == "Categories":
-                    fig = px.scatter(x=expenses_df['id'], y=expenses_df['category'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Categories")
-                    fig.update_yaxes(title=opt)
+            custom_color_scale = px.colors.qualitative.Plotly
+            if opt == "Categories":
+                fig = px.scatter(x=expenses_df['id'], y=expenses_df['category'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Categories")
+                fig.update_yaxes(title=opt)
 
-                elif opt == "Dates":
-                    fig = px.scatter(x=expenses_df['id'], y=expenses_df['date'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Dates")
-                    fig.update_yaxes(title=opt)
-                elif opt == "Amount":
-                    fig = px.scatter(x=expenses_df['id'], y=expenses_df['amount'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Amount")
-                    fig.update_yaxes(title=opt)
-                
-                fig.update_xaxes(title="Entry ID")
-                fig.update_layout(showlegend=False)
+            elif opt == "Dates":
+                fig = px.scatter(x=expenses_df['id'], y=expenses_df['date'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Dates")
+                fig.update_yaxes(title=opt)
+            elif opt == "Amount":
+                fig = px.scatter(x=expenses_df['id'], y=expenses_df['amount'], color=clusters,color_continuous_scale=custom_color_scale, title="Clustering by Amount")
+                fig.update_yaxes(title=opt)
+            
+            fig.update_xaxes(title="Entry ID")
+            fig.update_layout(showlegend=False)
 
-                st.write(expenses_df[['id','name','category','amount','date','cluster']])
-                st.plotly_chart(fig)
-        
-        except Exception as e:
-            st.error("There is no data available to cluster")
+            st.write(expenses_df[['id','name','category','amount','date','cluster']])
+            st.plotly_chart(fig)        
 
 if __name__ == "__main__":
     main()
